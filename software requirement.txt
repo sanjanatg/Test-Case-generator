@@ -235,3 +235,145 @@ Would you like me to generate the complete code solution next? I can build eithe
 1. A Python-based Streamlit application (Frontend + Backend + Excel export all contained cleanly within a single file).
 2. A split FastAPI Backend script and a React/Next.js frontend template with a complete AG Grid table layout.
 Let me know which setup you want to run with!
+
+
+
+
+
+
+
+1. The Client Browser (Heavy Lifter for Privacy & UI)
+
+Everything involving the sensitive corporate source files stays completely local on the user's computer inside their web browser context.
+• File Selection: The user drops the .docx or .pdf requirement file into the browser window.
+• Local Text Parsing: If you use modern frontend JavaScript libraries (like mammoth.js for Word documents or pdf.js for PDFs), the file is read and stripped down to raw text directly in the browser memory. The file never even uploads to a file storage server.
+• The Grid Interface: The 19-column spreadsheet matrix loads dynamically here. When the LLM replies, the browser populates the cells. When the user edits a cell, it changes instantly in browser memory.
+• Excel Export (.xlsx): When clicking "Export to Excel", libraries like SheetJS (xlsx) generate the binary spreadsheet file locally in the browser and trigger an immediate browser download.
+
+2. The Application Server (The Orchestrator)
+
+This is just a lightweight website host (e.g., your Next.js or FastAPI server node).
+• It serves the visual webpage interface (HTML/JS/CSS) to the user's browser.
+• Once the webpage loads in the user's browser, this server drops to nearly 0% CPU utilization because it doesn't need to save files or process machine learning calculations.
+
+3. The AI Inference Server (The LLM Muscle)
+
+This is the internal GPU server you requested from IT. It behaves strictly as a silent computational utility engine.
+• It holds no files, has no database, and remembers nothing after an API call finishes.
+• It sits quietly on your network waiting for a request block that looks like: "Here is a chunk of requirement text. Convert it into our structured QA Matrix JSON schema."
+• It processes the tokens using its GPU VRAM, returns the raw JSON string straight back to the client browser, and instantly frees up its memory for the next call.
+
+Why this is a Massive Win for Your Org
+
+┌─────────────────────────────────────────────────────────────┐
+│                   YOUR CORPORATE FIREWALL                   │
+│                                                             │
+│  [User Computer]                                            │
+│  ┌───────────────────────────────┐                          │
+│  │ Client Browser                │                          │
+│  │ • Holds PRD Document          │                          │
+│  │ • Parses text locally         │                          │
+│  │ • Renders 19-Column Grid      │                          │
+│  │ • Generates local .xlsx file  │                          │
+│  └───────────────┬───────────────┘                          │
+│                  │ (Secure API Call: Text-In, JSON-Out)     │
+│                  ▼                                          │
+│  ┌───────────────────────────────┐                          │
+│  │ Internal AI Inference Server │                          │
+│  │ • Runs LLM (Qwen/Llama)       │                          │
+│  │ • Stateless & No Databases    │                          │
+│  │ • Processes Raw Logic Only    │                          │
+│  └───────────────────────────────┘                          │
+└─────────────────────────────────────────────────────────────┘
+1. Ultimate Data Privacy: Because the file ingestion and text structuring happen inside the browser sandbox, no actual documents ever live on a server disk.
+2. Stateless Compute: If your network team monitors the GPU host, they will see that it is completely stateless. It receives a text payload, computes it, delivers the response payload, and vanishes. It eliminates data retention liabilities.
+3. Maximum Scalability: Because the grid processing, editing, and Excel writing are pushed to the user's local machine hardware (the client browser), your backend server architecture can scale to hundreds of QA team members simultaneously without crashing.
+
+
+
+
+
+
+
+To guarantee your system is fully enterprise-ready, robust, and capable of scaling seamlessly as more teams adopt it, we must lock down the system design constraints before writing code.
+Because you have chosen a client-heavy, stateless architecture (where files are processed in the browser and the GPU server only calculates tokens), your scaling footprint is naturally highly optimized. However, you must design for edge-case failures, large file constraints, and server concurrency.
+Here is the comprehensive architectural, data flow, and scalability blueprint you must adhere to.
+
+1. End-to-End System Data Flow Architecture
+
+The data travels through a strict lifecycle designed to keep data footprints minimal and secure:
+[User Browser Sandbox]
+  │  1. Ingests .docx / .pdf locally via JS memory buffer
+  │  2. Chunks raw text into logical feature blocks
+  ▼
+[Company Network Gateway]
+  │  3. Forwards structured text payloads over HTTPS/WSS
+  ▼
+[Stateless LLM Inference Server (vLLM / Ollama)]
+  │  4. Computes token logic on GPU VRAM
+  │  5. Maps payload strictly to required JSON matrix structure
+  ▼
+[User Browser Sandbox]
+  │  6. Validates JSON payload syntax
+  │  7. Renders into a virtualised UI data grid
+  │  8. Compiles binary Excel structure locally -> triggers native browser download
+
+2. Core Scalability & Performance Strategy
+
+Pushing file handling and UI rendering to the client's browser frees up your servers, but it shifts the performance burden to the user's machine. You must handle that gracefully:
+
+UI Grid Virtualization (Handling 100+ Test Cases)
+
+If a user uploads a massive specification document that generates 50–100 test cases, rendering standard HTML table rows (<tr> and <td> elements) for a 19-column table will cause the browser to freeze and lag.
+• The Blueprint: Use DOM Virtualization (built into frameworks like AG Grid or TanStack Virtual). The browser will only render the rows and cells currently visible in the user's viewport screen window. As the user scrolls horizontally or vertically, rows are recycled dynamically, keeping memory usage flat.
+
+Asynchronous Pipeline & Server Concurrency
+
+If five QA engineers click "Generate Suite" at the exact same fraction of a second, a local server running a 32B model will queue the requests, causing user timeouts if handled synchronously.
+• The Blueprint: Your internal AI inference server should be deployed using vLLM rather than basic Ollama. vLLM utilizes Continuous Batching and PagedAttention. It dynamically groups incoming API prompts from different users into a single processing batch inside the GPU's VRAM, allowing multiple users to get simultaneous text generation without a massive drop in speed.
+• The Fallback: Your client-side UI application must feature a step-by-step progress tracking loop (e.g., "Processing Section 1 of 4...") so the user knows the background script is actively executing.
+
+3. Resilience, Security & Error Handling Strategies
+
+Because LLMs can occasionally behave unpredictably, the system must be built with strict validation checkpoints.
+                  ┌─────────────────────────────┐
+                  │   Incoming Raw Text Data    │
+                  └──────────────┬──────────────┘
+                                 │
+                                 ▼
+                  ┌─────────────────────────────┐
+                  │    LLM Output Generation    │
+                  └──────────────┬──────────────┘
+                                 │
+                                 ▼
+               / ─────────────────────────────── \
+             <   Is the Output Valid, Unbroken JSON?  >
+               \ ─────────────────────────────── /
+                              /   \
+                       YES   /     \   NO
+                            /       \
+                           ▼         ▼
+        ┌────────────────────┐     ┌────────────────────┐
+        │ Pass to UI Matrix  │     │ Trigger Client-Side│
+        │ Grid & Render Rows │     │ Auto-Retry Parser  │
+        └────────────────────┘     └────────────────────┘
+
+JSON Structural Integrity Checking
+
+Local open-source models might occasionally miss a closing bracket (}) or inject unexpected trailing commas when dealing with long, multi-line arrays like Test Procedure steps.
+• The Blueprint: Implement a Client-Side JSON Guard Layer. Before sending data to the spreadsheet view grid, the frontend script must pass the response string through a JSON validator. If it fails to parse, the application should automatically catch the error and execute a background auto-retry mechanism, rather than crashing the user's tab.
+
+Prompt Window Safeguards (Chunking)
+
+If a user tries to upload an entire 150-page architecture spec manual all at once, they risk blowing past the model's effective context limit.
+• The Blueprint: Establish a strict client-side Character / Token Threshold Guard. If the extracted document text exceeds a defined threshold (e.g., 20,000 words), the frontend code must force the user to pick specific chapters, or use an automatic paragraph-splitting loop to send the text to the server in clean, manageable chunks.
+
+4. Architectural Constraints Matrix
+
+
+Category	Tactical Engineering Constraint	Purpose / Goal
+Data Lifecycle	Strict In-Memory Volatility. Absolutely no server-side databases, persistent logs, or file caching allowed.	Full compliance with enterprise security and intellectual property protection firewalls.
+Network Protocol	REST API utilizing standard JSON schema bodies or WebSockets for live streaming text updates.	Simple, stable routing within standard corporate networking infrastructure.
+UI Components	Fully editable cells with input locking + standard global UI component actions.	Eliminates reliance on complex backend state-management scripts by tracking edits purely locally.
+
+
