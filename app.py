@@ -11,6 +11,85 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
+import sqlite3
+import hashlib
+
+DB_FILE = "users.db"
+
+
+def hash_password(password: str) -> str:
+    """Encrypt plain text user passwords into a secure SHA256 string."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def init_db():
+    """Create the local authentication structure automatically on start."""
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                role TEXT CHECK(role IN ('admin', 'user')) NOT NULL,
+                status INTEGER DEFAULT 1
+            )
+        """)
+        conn.commit()
+
+def has_admin() -> bool:
+    """Check if the database node contains at least one primary admin configuration."""
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1")
+        return cursor.fetchone() is not None
+
+def create_user(username: str, password_raw: str, role: str) -> bool:
+    """Store a newly provisioned operator identity profile securely into SQLite."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO users (username, password, role, status) VALUES (?, ?, ?, 1)",
+                (username.strip(), hash_password(password_raw), role)
+            )
+            conn.commit()
+            return True
+    except sqlite3.IntegrityError:
+        return False
+
+def verify_user(username: str, password_raw: str) -> dict[str, Any] | None:
+    """Validate sign-in fields against existing data variables."""
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, username, role, status FROM users WHERE username = ? AND password = ?",
+            (username.strip(), hash_password(password_raw))
+        )
+        row = cursor.fetchone()
+        if row:
+            return {"id": row[0], "username": row[1], "role": row[2], "status": row[3]}
+    return None
+
+def get_all_users() -> list[tuple]:
+    """Retrieve standard platform profiles to populate the administrator table view."""
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, username, role, status FROM users WHERE role != 'admin'")
+        return cursor.fetchall()
+
+def update_user_status(user_id: int, status: int):
+    """Force-switch execution status between active and deactivated states."""
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET status = ? WHERE id = ?", (status, user_id))
+        conn.commit()
+
+def update_user_password(user_id: int, new_password_raw: str):
+    """Enforce a strict administrator override profile password switch."""
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(new_password_raw), user_id))
+        conn.commit()
 
 load_dotenv()
 
@@ -167,6 +246,60 @@ def generate_cases(requirements: str, count: int, *, api_key: str, base_url: str
         raise ValueError("The AI response was not valid JSON. Please try again.") from exc
     return normalize_cases(payload)
 
+def render_admin_dashboard():
+    """Displays the custom account layout control panels to active administrators."""
+    st.subheader("🛠️ Platform Administrative Management Control Engine")
+    tab1, tab2 = st.tabs(["Manage System Accounts", "Register New User"])
+    
+    with tab1:
+        st.markdown("#### Active Operator Registry")
+        users_list = get_all_users()
+        if not users_list:
+            st.info("No standard operator entries registered on the workspace network yet.")
+        else:
+            for uid, uname, urole, ustatus in users_list:
+                status_lbl = "ACTIVE" if ustatus == 1 else "DEACTIVATED"
+                col_u, col_s, col_p = st.columns([2, 1, 1])
+                with col_u:
+                    st.markdown(f"**User:** `{uname}` · Status: `{status_lbl}`")
+                with col_s:
+                    if ustatus == 1:
+                        if st.button("🔴 Deactivate", key=f"deact_{uid}", use_container_width=True):
+                            update_user_status(uid, 0)
+                            st.success(f"Disabled entry access for user: {uname}")
+                            st.rerun()
+                    else:
+                        if st.button("🟢 Activate", key=f"act_{uid}", use_container_width=True):
+                            update_user_status(uid, 1)
+                            st.success(f"Restored entry access for user: {uname}")
+                            st.rerun()
+                with col_p:
+                    with st.popover(f"🔐 Reset Password", use_container_width=True):
+                        new_pass = st.text_input("New Secure Password", type="password", key=f"pwd_{uid}")
+                        if st.button("Confirm Override", key=f"btn_p_{uid}"):
+                            if new_pass.strip():
+                                update_user_password(uid, new_pass)
+                                st.success("Credentials updated successfully.")
+                            else:
+                                st.error("Input target value cannot remain blank.")
+                st.divider()
+                
+    with tab2:
+        st.markdown("#### Provision System Identity Credentials")
+        with st.form("create_user_form"):
+            new_username = st.text_input("Account Identity Username")
+            new_password = st.text_input("Workspace Entry Password", type="password")
+            submit_create = st.form_submit_button("Generate Secure Profile", type="primary")
+            
+            if submit_create:
+                if not new_username.strip() or not new_password.strip():
+                    st.error("Target verification metrics cannot remain empty.")
+                else:
+                    success = create_user(new_username, new_password, "user")
+                    if success:
+                        st.success(f"Profile `{new_username}` successfully added to local database registry!")
+                    else:
+                        st.error("Username already registered on the local workspace node database.")
 
 def workbook_bytes(frame: pd.DataFrame) -> bytes:
     output = io.BytesIO()
@@ -195,6 +328,12 @@ def workbook_bytes(frame: pd.DataFrame) -> bytes:
 
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🧪", layout="wide")
+# Insert this right below st.set_page_config() calls
+init_db()
+
+if "auth_user" not in st.session_state:
+    st.session_state.auth_user = None  # Tracks global authorization states
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
@@ -207,137 +346,128 @@ h1, h2, h3 { font-family: 'Manrope', sans-serif; letter-spacing: -0.03em; }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="hero"><div class="eyebrow"><h1>TATA ADVANCED SYSTEMS LIMITED</h1></div><h3>Test Case Generator</h3></div>', unsafe_allow_html=True)
-
+# --- STEP 3.5: GLOBAL APP STATE INITIALIZATION ---
 if "suite" not in st.session_state:
     st.session_state.suite = blank_suite()
 if "source_text" not in st.session_state:
     st.session_state.source_text = ""
 
-with st.sidebar:
-    st.markdown("###")
-    provider_names = list(PROVIDER_PRESETS)
-    configured_provider = os.getenv("LLM_PROVIDER", "OpenAI")
-    provider_index = provider_names.index(configured_provider) if configured_provider in provider_names else 0
-    provider = st.selectbox("AI provider", provider_names, index=provider_index)
-    preset = PROVIDER_PRESETS[provider]
-    base_url = st.text_input(
-        "API base URL",
-        value=os.getenv(preset["base_env"], preset["base_url"]),
-        key=f"base_url_{provider}",
-        help="Choose a preset or enter any server that supports the OpenAI Chat Completions API.",
-    )
-    model = st.text_input(
-        "Model name",
-        value=os.getenv(preset["model_env"], preset["model"]),
-        key=f"model_{provider}",
-        help="Use the model identifier expected by the selected API server.",
-    )
-    default_key = os.getenv(preset["key_env"], "")
-    if provider == "OpenAI" and not default_key:
-        default_key = os.getenv("OPENAI_API_KEY", "")
-    api_key = st.text_input(
-        "API key",
-        value=default_key,
-        type="password",
-        key=f"api_key_{provider}",
-        disabled=provider == "Ollama",
-        help="Ollama runs locally and does not require a key. Cloud providers need their own API key.",
-    )
-    if provider == "Ollama":
-        api_key = "ollama"
-        st.caption("Ollama must be running locally with the selected model already downloaded.")
-    elif provider == "Custom OpenAI-compatible" and not api_key:
-        api_key = "not-required"
-    if provider == "Gemini":
-        st.caption("Gemini uses Google's OpenAI-compatible endpoint. Add a key from Google AI Studio.")
-    upload = st.file_uploader("Requirements document", type=["pdf", "docx", "txt"], help=f"Maximum file size: {MAX_UPLOAD_MB} MB. Text is extracted in memory.")
-    if upload and upload.size > MAX_UPLOAD_MB * 1024 * 1024:
-        st.error(f"This file exceeds the {MAX_UPLOAD_MB} MB limit.")
-    elif upload:
-        try:
-            st.session_state.source_text = extract_text(upload)
-            if not st.session_state.source_text.strip():
-                st.warning("No text could be extracted. Scanned PDFs need OCR before upload.")
-            elif len(st.session_state.source_text) > MAX_TEXT_CHARS:
-                st.warning("This document is too long for one generation request. Please upload a shorter section (maximum 80,000 characters).")
+# Global Workspace Header Brand Banner
+st.markdown('<div class="hero"><div class="eyebrow"><h1>TATA ADVANCED SYSTEMS LIMITED</h1></div><h3>Test Case Generator</h3></div>', unsafe_allow_html=True)
+
+
+# --- STEP 4: SECURITY ROUTING INTERFACE LOOP ---
+
+# --- STEP 4: SECURITY ROUTING INTERFACE LOOP ---
+
+# 1. First execution path: Initial master administrator registration wizard
+if not has_admin():
+    st.markdown('<div class="hero"><h1>Setup Administrative Account</h1><p>No administrator detected. Establish your workspace master credentials below.</p></div>', unsafe_allow_html=True)
+    with st.form("admin_setup_form"):
+        admin_user = st.text_input("Admin Username", value="admin")
+        admin_pass = st.text_input("Admin Password", type="password")
+        confirm_pass = st.text_input("Confirm Password", type="password")
+        submit_setup = st.form_submit_button("Initialize Platform", type="primary")
+        if submit_setup:
+            if admin_pass != confirm_pass:
+                st.error("Passwords do not match.")
             else:
-                st.success(f"Extracted {len(st.session_state.source_text):,} characters")
-        except Exception as exc:
-            st.error(f"Could not read this document: {exc}")
-    desired_count = st.slider("Number of test cases", min_value=5, max_value=30, value=12)
-    ready = bool(st.session_state.source_text.strip()) and len(st.session_state.source_text) <= MAX_TEXT_CHARS
-    if st.button("Generate test cases", type="primary", width="stretch", disabled=not ready):
-        try:
-            with st.spinner("Analyzing requirements and drafting test cases…"):
-                st.session_state.suite = generate_cases(
-                    st.session_state.source_text,
-                    desired_count,
-                    api_key=api_key,
-                    base_url=base_url,
-                    model=model,
-                )
-            st.success(f"Generated {len(st.session_state.suite)} test cases. Review and edit before export.")
-        except Exception as exc:
-            st.error(str(exc))
-    st.divider()
-    st.caption("Files and edits stay in this app session. Requirement text is sent to the configured AI endpoint only when you generate a suite.")
-    
+                create_user(admin_user, admin_pass, "admin")
+                st.success("Admin system created successfully! Please proceed to login.")
+                st.rerun()
 
-# 1. Ensure the matrix has a baseline template row immediately if empty before drawing anything
-if st.session_state.suite.empty:
-    st.session_state.suite = pd.DataFrame([{column: "" for column in COLUMNS}], columns=COLUMNS)
+# 2. Second execution path: Secure login entry gate panel
+elif st.session_state.auth_user is None:
+    with st.form("login_form"):
+        st.markdown("#### Account Verification Security Gate")
+        login_username = st.text_input("Username")
+        login_password = st.text_input("Password", type="password")
+        submit_login = st.form_submit_button("Sign In", type="primary")
+        if submit_login:
+            user_record = verify_user(login_username, login_password)
+            if user_record:
+                if user_record["status"] == 0:
+                    st.error("Your account has been deactivated. Please contact the administrator.")
+                else:
+                    st.session_state.auth_user = user_record
+                    st.rerun()
+            else:
+                st.error("Invalid credentials entered. In case your application password is to be changed, user must contact the admin.")
 
-# 2. Now draw the header and the Export button safely
-left, right = st.columns([3, 1])
-with left:
-    st.subheader("Review matrix")
-    st.caption("Edit cells directly. Use the last blank row to add cases.")
-with right:
-    # The button will now see the data correctly and stay visible
-    xlsx_data = workbook_bytes(st.session_state.suite)
-    st.download_button(
-        label="⬇️Export Excel (.xlsx)",
-        data=xlsx_data,
-        file_name=f"test_cases_{date.today().isoformat()}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary",
-        use_container_width=True
-    )
+# 3. Third execution path: Validated Session Operations Router
+else:
+    # Persistent top-of-sidebar Session Identity and Sign Out configuration
+    st.sidebar.markdown(f"👤 **Active Session:** `{st.session_state.auth_user['username']}`")
+    if st.sidebar.button("🚪 Terminate Session", use_container_width=True):
+        st.session_state.auth_user = None
+        st.session_state.suite = blank_suite()
+        st.session_state.source_text = ""
+        st.rerun()
+        
+    if st.session_state.auth_user["role"] == "admin":
+        render_admin_dashboard()
+    else:
+        # ────────────────────────────────────────────────────────
+        # 🚨 EVERY SINGLE LINE BELOW THIS NEST MUST BE INDENTED 
+        # BY EXACTLY 8 SPACES (or 2 tabs)
+        # ────────────────────────────────────────────────────────
+        
+        # 1. Ensure the matrix has a baseline template row immediately if empty
+        if st.session_state.suite.empty:
+            st.session_state.suite = pd.DataFrame([{column: "" for column in COLUMNS}], columns=COLUMNS)
 
-# 3. Inform the user if they haven't uploaded a document yet
-if len(st.session_state.source_text) == 0:
-    st.info("Upload a requirements document in the sidebar to begin. You can also add cases manually in the grid below.")
+        # 2. Now draw the header and the Export button safely inside the logged-in user state
+        left, right = st.columns([3, 1])
+        with left:
+            st.subheader("Review matrix")
+            st.caption("Edit cells directly. Use the last blank row to add cases.")
+        with right:
+            xlsx_data = workbook_bytes(st.session_state.suite)
+            st.download_button(
+                label="⬇️ Export Excel (.xlsx)",
+                data=xlsx_data,
+                file_name=f"test_cases_{date.today().isoformat()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True
+            )
+
+        # 3. Inform the user if they haven't uploaded a document yet
+        if len(st.session_state.source_text) == 0:
+            st.info("Upload a requirements document in the sidebar to begin. You can also add cases manually in the grid below.")
+
+        # 4. The data editor workspace table
+        edited = st.data_editor(
+            st.session_state.suite,
+            key="case_editor",
+            num_rows="dynamic",
+            hide_index=True,
+            width="stretch",
+            height=550,
+            disabled=False, 
+            column_config={
+                "Sr. No.": st.column_config.TextColumn("Sr. No.", width="small"),
+                "Testing Type": st.column_config.SelectboxColumn("Testing Type", options=["Manual", "Automation"], width="small"),
+                "System Test Case Type": st.column_config.SelectboxColumn("System Test Case Type", options=["Positive", "Negative"], width="medium"),
+                "Priority": st.column_config.SelectboxColumn("Priority", options=["High", "Medium", "Low"], width="small"),
+                "Test Status": st.column_config.SelectboxColumn("Test Status", options=["", "passed", "failed", "pending-not-offered", "pending not able to simulate", "pending out of scope", "pending -parent test case failed"], width="medium"),
+                "Date of Testing": st.column_config.TextColumn("Date of Testing", help="Enter date as DD-MM-YYYY"),
+                "Test Objective": st.column_config.TextColumn("Test Objective", width="large"),
+                "Pre-requisite": st.column_config.TextColumn("Pre-requisite", width="large"),
+                "Test I/P": st.column_config.TextColumn("Test I/P", width="large"),
+                "Test Procedure": st.column_config.TextColumn("Test Procedure", width="large"),
+                "Expected Output": st.column_config.TextColumn("Expected Output", width="large"),
+            },
+        )
+        st.session_state.suite = edited
+
+        # 5. Bottom dashboard summary counters metrics
+        valid_rows = edited.fillna("").astype(str).apply(lambda row: any(value.strip() for value in row), axis=1).sum()
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Cases in matrix", int(valid_rows))
+        m2.metric("Requirement text", f"{len(st.session_state.source_text):,} chars")
+        m3.metric("Export format", "Excel (.xlsx)")
 
 
-edited = st.data_editor(
-    st.session_state.suite,
-    key="case_editor",
-    num_rows="dynamic",
-    hide_index=True,
-    width="stretch",
-    height=550,
-    # This keyword clears Streamlit's built-in header actions (hiding the "Download as CSV" tool)
-    disabled=False, 
-    column_config={
-        "Sr. No.": st.column_config.TextColumn("Sr. No.", width="small"),
-        "Testing Type": st.column_config.SelectboxColumn("Testing Type", options=["Manual", "Automation"], width="small"),
-        "System Test Case Type": st.column_config.SelectboxColumn("System Test Case Type", options=["Positive", "Negative"], width="medium"),
-        "Priority": st.column_config.SelectboxColumn("Priority", options=["High", "Medium", "Low"], width="small"),
-        "Test Status": st.column_config.SelectboxColumn("Test Status", options=["", "passed", "failed", "pending-not-offered", "pending not able to simulate", "pending out of scope", "pending -parent test case failed"], width="medium"),
-        "Date of Testing": st.column_config.TextColumn("Date of Testing", help="Enter date as DD-MM-YYYY"),
-        "Test Objective": st.column_config.TextColumn("Test Objective", width="large"),
-        "Pre-requisite": st.column_config.TextColumn("Pre-requisite", width="large"),
-        "Test I/P": st.column_config.TextColumn("Test I/P", width="large"),
-        "Test Procedure": st.column_config.TextColumn("Test Procedure", width="large"),
-        "Expected Output": st.column_config.TextColumn("Expected Output", width="large"),
-    },
-)
 
-st.session_state.suite = edited
 
-valid_rows = edited.fillna("").astype(str).apply(lambda row: any(value.strip() for value in row), axis=1).sum()
-m1, m2, m3 = st.columns(3)
-m1.metric("Cases in matrix", int(valid_rows))
-m2.metric("Requirement text", f"{len(st.session_state.source_text):,} chars")
-m3.metric("Export format", "Excel (.xlsx)")
