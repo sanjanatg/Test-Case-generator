@@ -397,53 +397,117 @@ elif st.session_state.auth_user is None:
 # 3. Third execution path: Validated Session Operations Router
 else:
     # Persistent top-of-sidebar Session Identity and Sign Out configuration
-    st.sidebar.markdown(f"👤 **Active Session:** `{st.session_state.auth_user['username']}`")
-    if st.sidebar.button("🚪 Terminate Session", use_container_width=True):
-        st.session_state.auth_user = None
-        st.session_state.suite = blank_suite()
-        st.session_state.source_text = ""
-        st.rerun()
+    # st.sidebar.markdown(f"👤 **Active Session:** `{st.session_state.auth_user['username']}`")
+    # if st.sidebar.button("Terminate Session", use_container_width=True):
+    #     st.session_state.auth_user = None
+    #     st.session_state.suite = blank_suite()
+    #     st.session_state.source_text = ""
+    #     st.rerun()
         
     if st.session_state.auth_user["role"] == "admin":
         render_admin_dashboard()
     else:
         # ────────────────────────────────────────────────────────
-        # 🚨 EVERY SINGLE LINE BELOW THIS NEST MUST BE INDENTED 
-        # BY EXACTLY 8 SPACES (or 2 tabs)
+        # 🛠️ RECONFIGURED OPERATOR WORKSPACE (NO SIDEBAR LAYOUT)
         # ────────────────────────────────────────────────────────
         
-        # 1. Ensure the matrix has a baseline template row immediately if empty
+        # 1. Top-Right Session Panel Information Overlay
+        session_col1, session_col2 = st.columns([3, 1])
+        with session_col2:
+            st.markdown(f" **Session:** `{st.session_state.auth_user['username']}`")
+            if st.button(" Terminate Session", use_container_width=True):
+                st.session_state.auth_user = None
+                st.session_state.suite = blank_suite()
+                st.session_state.source_text = ""
+                st.rerun()
+
+        # 2. LLM Configuration Engine (Relocated from Sidebar)
+        with st.expander("⚙️ LLM Provider & API Configurations", expanded=False):
+            p_col1, p_col2 = st.columns(2)
+            with p_col1:
+                provider = st.selectbox("LLM Provider Preset", list(PROVIDER_PRESETS.keys()))
+                preset = PROVIDER_PRESETS[provider]
+                
+                # Fetch default values from environment or presets
+                env_base = os.getenv(preset["base_env"], preset["base_url"])
+                env_model = os.getenv(preset["model_env"], preset["model"])
+                env_key = os.getenv(preset["key_env"], "")
+                
+                base_url = st.text_input("API Base URL", value=env_base)
+            with p_col2:
+                model_name = st.text_input("Model Name", value=env_model)
+                api_key = st.text_input("API Access Key", value=env_key, type="password")
+
+        # 3. Import Requirements Document Control Center
+        st.markdown("### ⬆️ Import Requirement Document")
+        import_tab1, import_tab2 = st.tabs(["📁 Upload Document File", "Paste Plain Text Here"])
+        
+        requirements_input = ""
+        
+        with import_tab1:
+            uploaded_file = st.file_uploader(
+                "Select a requirement file (.pdf, .docx, .txt)", 
+                type=["pdf", "docx", "txt"],
+                help=f"Maximum allowed file size is {MAX_UPLOAD_MB}MB."
+            )
+            if uploaded_file is not None:
+                try:
+                    requirements_input = extract_text(uploaded_file)
+                    st.success(f"Successfully extracted document: {uploaded_file.name}")
+                except Exception as e:
+                    st.error(f"Error parsing file: {str(e)}")
+                    
+        with import_tab2:
+            pasted_text = st.text_area(
+                "Paste requirements text block directly here", 
+                height=200,
+                max_chars=MAX_TEXT_CHARS,
+                placeholder="Paste structural features, software specs, or technical rules..."
+            )
+            if pasted_text.strip():
+                requirements_input = pasted_text.strip()
+
+        # Generation Action Control Parameters
+        if requirements_input:
+            st.session_state.source_text = requirements_input
+            gen_col1, gen_col2 = st.columns([1, 2])
+            with gen_col1:
+                target_count = st.number_input("Target Test Case Count", min_value=1, max_value=100, value=10)
+            with gen_col2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("✨ Generate AI Test Cases Matrix", type="primary", use_container_width=True):
+                    with st.spinner("Analyzing requirements and mapping test matrix structure..."):
+                        try:
+                            generated_df = generate_cases(
+                                requirements=requirements_input,
+                                count=target_count,
+                                api_key=api_key,
+                                base_url=base_url,
+                                model=model_name
+                            )
+                            st.session_state.suite = generated_df
+                            st.success(f"Generated {len(generated_df)} verification rows successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Generation Failed: {str(e)}")
+
+        # 4. Ensure the spreadsheet matrix has at least one baseline row if completely empty
         if st.session_state.suite.empty:
             st.session_state.suite = pd.DataFrame([{column: "" for column in COLUMNS}], columns=COLUMNS)
 
-        # 2. Now draw the header and the Export button safely inside the logged-in user state
-        left, right = st.columns([3, 1])
-        with left:
-            st.subheader("Review matrix")
-            st.caption("Edit cells directly. Use the last blank row to add cases.")
-        with right:
-            xlsx_data = workbook_bytes(st.session_state.suite)
-            st.download_button(
-                label="⬇️ Export Excel (.xlsx)",
-                data=xlsx_data,
-                file_name=f"test_cases_{date.today().isoformat()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary",
-                use_container_width=True
-            )
+        # 5. Spreadsheet Grid Review Layout Banner
+        st.markdown("---")
+        st.subheader("Review Matrix Grid")
+        st.caption("Edit spreadsheet data cells directly. Use the last interactive blank row to manual-insert elements.")
 
-        # 3. Inform the user if they haven't uploaded a document yet
-        if len(st.session_state.source_text) == 0:
-            st.info("Upload a requirements document in the sidebar to begin. You can also add cases manually in the grid below.")
-
-        # 4. The data editor workspace table
+        # 6. The Interactive Data Editor View Workspace Table
         edited = st.data_editor(
             st.session_state.suite,
             key="case_editor",
             num_rows="dynamic",
             hide_index=True,
             width="stretch",
-            height=550,
+            height=500,
             disabled=False, 
             column_config={
                 "Sr. No.": st.column_config.TextColumn("Sr. No.", width="small"),
@@ -461,13 +525,24 @@ else:
         )
         st.session_state.suite = edited
 
-        # 5. Bottom dashboard summary counters metrics
+        # 7. Relocated Primary Download Action Button (Placed directly after spreadsheet matrix preview)
+        st.markdown("<br>", unsafe_allow_html=True)
+        export_col1, export_col2, export_col3 = st.columns([1, 2, 1])
+        with export_col2:
+            xlsx_data = workbook_bytes(st.session_state.suite)
+            st.download_button(
+                label="⬇️ Export Generated Test Suite Excel Sheet (.xlsx)",
+                data=xlsx_data,
+                file_name=f"test_cases_{date.today().isoformat()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True
+            )
+
+        # 8. Bottom Dashboard Analytics Counters Metrics Panel
+        st.markdown("---")
         valid_rows = edited.fillna("").astype(str).apply(lambda row: any(value.strip() for value in row), axis=1).sum()
         m1, m2, m3 = st.columns(3)
-        m1.metric("Cases in matrix", int(valid_rows))
-        m2.metric("Requirement text", f"{len(st.session_state.source_text):,} chars")
-        m3.metric("Export format", "Excel (.xlsx)")
-
-
-
-
+        m1.metric("Total Active Cases", int(valid_rows))
+        m2.metric("Requirement Source Capacity", f"{len(st.session_state.source_text):,} characters")
+        m3.metric("Configured Output Template", "Excel Worksheets (.xlsx)")
