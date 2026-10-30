@@ -20,6 +20,25 @@ A local-first web app that turns software requirements into an editable QA test 
 - For Ollama, install and run Ollama locally and download a model first. Ollama does not need an API key.
 - Network access from the app machine to the selected endpoint when generating cases.
 
+- To comfortably support 10 concurrent users on a local server executing a deep-reasoning model like deepseek-r1:14b, your primary hardware bottleneck is GPU VRAM capacity and memory bandwidth.
+- Because your architecture offloads file parsing and UI rendering to the client browser, the server only processes raw text tokens. However, reasoning models generate large amounts of internal <think> tokens, making highly optimized serving software and specialized hardware essential.
+
+1. Target Server Hardware Requirements
+
+To prevent requests from queuing up and timing out when 10 QA engineers click "Generate Suite" at the exact same moment, you need dual modern enterprise GPUs or a dedicated AI workstation setup.
+
+Component	Minimum Specification (Will feel sluggish)	Recommended Specification (Comfortable & Fast)
+GPU	1× NVIDIA RTX A6000 (48GB VRAM)	2× NVIDIA RTX 4090 (48GB combined VRAM) or 1× NVIDIA H100 NVL / A100 (80GB)
+GPU Architecture	Ampere (PCIe Gen 4)	Ada Lovelace or Hopper (PCIe Gen 5) — Crucial for high-speed tensor core computations during long reasoning chains.
+System RAM	64 GB DDR4	128 GB DDR5 (Helps handle prompt caching over system memory swaps if needed).
+CPU	8-Core AMD Ryzen / Intel Core i7	16-Core to 32-Core AMD EPYC or Threadripper (High PCIe lane count to run dual GPUs at full speed).
+
+
+### Why VRAM matters for 10 concurrent users:
+
+• The Model Footprint: The deepseek-r1:14b model requires roughly 9GB to 12GB of VRAM just to sit in memory.
+• The KV Cache Footprint: As 10 users stream reasoning steps simultaneously, the server must hold the history of all active conversations in VRAM (the Key-Value Cache). Long reasoning traces can scale the VRAM needs up dramatically. 48GB of total VRAM provides the comfortable safety buffer needed to prevent out-of-memory (OOM) crashes.
+
 ## Setup
 
 Open PowerShell in this folder and run:
@@ -34,7 +53,7 @@ Copy-Item .env.example .env
 
 Open `.env` in a text editor and choose `LLM_PROVIDER`: `OpenAI`, `Gemini`, `Ollama`, or `Custom OpenAI-compatible`. Set the matching model, endpoint, and key values in `.env.example`. Keep `.env` private; it is excluded from Git. The provider, API base URL, model, and key can also be selected or edited in the app sidebar for the current session.
 
-### Provider examples
+### Provider examples if cloud hosted service 
 
 | Provider | API base URL | Model | Key |
 | --- | --- | --- | --- |

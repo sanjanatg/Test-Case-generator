@@ -56,7 +56,23 @@ COLUMNS = [
     "Pending Rational", "Remarks", "Machine Name",
 ]
 
-SYSTEM_PROMPT = """You are a senior software QA engineer. Convert the supplied requirements into a thorough, traceable test suite. Return only a JSON object with a `test_cases` array. Each case must have exactly these string fields: testing_type, stp_ref_no, group_name, atp_name, atp_ref_no, test_case_no, system_test_case_type, test_objective, pre_requisite, test_input, test_procedure, expected_output, priority, ver_no. Use newline-separated concise ordered steps in test_procedure and newline-separated checks in expected_output. Include positive, negative, boundary, and relevant edge cases. Use only facts supported by the source. If a detail is unspecified, leave its field blank or explicitly say `Not specified`; do not invent product behavior, references, or validation rules. Set execution-only fields (actual output, tested by, date, status, pending rationale, remarks, machine name) in the app, not in your response. Priorities must be High, Medium, or Low. Testing type should be Manual unless requirements clearly indicate otherwise. Keep cases distinct and actionable."""
+SYSTEM_PROMPT = """You are a context-aware Senior QA Engineering Lead. Extract test requirements from the supplied text document and generate a structured list of test cases following the rules exactly.
+
+Return ONLY a JSON object with a `test_cases` array. Each case must have exactly these fields:
+- sr_no: Incremental counter starting from 1 to n.
+- testing_type: Set strictly to "Manual".
+- group_name: Main 2-3 word feature/view title (e.g., "Setup Screen").
+- test_case_no: Take the primary token from group_name, convert to uppercase shorthand, and append the counter (e.g., "SETUP_TC1", "SETUP_TC2").
+- system_test_case_type: Must be strictly either "Positive" or "Negative".
+- test_objective: The specific objective parsed from context.
+- pre_requisite: Dynamically capture the nesting level. If a module resides within a sub-view, state the exact path requirement (e.g., "Maintenance screen should be displayed"). If known only, else blank.
+- test_ip: Return "N/A" if no user values are typed. For login panels use "valid credentials". For specialized forms, dynamically deduce inputs based on text rules; leave blank if unclear.
+- test_procedure: An array of chronological execution step strings.
+- expected_output: An array of strings describing both the UI response message AND any internal actions/side-effects.
+- priority: Must be High, Medium, or Low.
+
+Force the following keys to compile as completely empty strings ("") so they clear for user execution: 'stp_ref_no', 'atp_name', 'atp_ref_no', 'ver_no', 'actual_output', 'tested_by', 'date_of_testing', 'test_status', 'pending_rational', 'remarks', 'machine_name'."""
+
 
 
 def blank_suite() -> pd.DataFrame:
@@ -110,14 +126,15 @@ def normalize_cases(payload: dict[str, Any]) -> pd.DataFrame:
             "group_name": "Group Name", "atp_name": "ATP Name",
             "atp_ref_no": "ATP Ref No.", "test_case_no": "TestCase No.",
             "system_test_case_type": "System Test Case Type", "test_objective": "Test Objective",
-            "pre_requisite": "Pre-requisite", "test_input": "Test I/P",
+            "pre_requisite": "Pre-requisite", "test_ip": "Test I/P",
             "test_procedure": "Test Procedure", "expected_output": "Expected Output",
             "priority": "Priority", "ver_no": "Ver No.",
         }
+
         for source, target in mapping.items():
             row[target] = _as_text(item.get(source, ""))
         row["TestCase No."] = row["TestCase No."] or f"TC{index:03d}"
-        row["Test Status"] = "Not Run"
+        row["Test Status"] = ""
         generated.append(row)
     if not generated:
         raise ValueError("The response did not contain any valid test cases.")
@@ -190,7 +207,7 @@ h1, h2, h3 { font-family: 'Manrope', sans-serif; letter-spacing: -0.03em; }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="hero"><div class="eyebrow">Quality engineering workspace</div><h1>Test Case Generator</h1><p>Turn product requirements into a structured, editable QA matrix, then export it to Excel.</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="hero"><div class="eyebrow"><h1>TATA ADVANCED SYSTEMS LIMITED</h1></div><h3>Test Case Generator</h3></div>', unsafe_allow_html=True)
 
 if "suite" not in st.session_state:
     st.session_state.suite = blank_suite()
@@ -198,7 +215,7 @@ if "source_text" not in st.session_state:
     st.session_state.source_text = ""
 
 with st.sidebar:
-    st.markdown("### Generate a suite")
+    st.markdown("###")
     provider_names = list(PROVIDER_PRESETS)
     configured_provider = os.getenv("LLM_PROVIDER", "OpenAI")
     provider_index = provider_names.index(configured_provider) if configured_provider in provider_names else 0
@@ -265,19 +282,33 @@ with st.sidebar:
             st.error(str(exc))
     st.divider()
     st.caption("Files and edits stay in this app session. Requirement text is sent to the configured AI endpoint only when you generate a suite.")
-    st.caption(f"Provider: `{provider}` · Model: `{model or 'not set'}`")
+    
 
+# 1. Ensure the matrix has a baseline template row immediately if empty before drawing anything
+if st.session_state.suite.empty:
+    st.session_state.suite = pd.DataFrame([{column: "" for column in COLUMNS}], columns=COLUMNS)
+
+# 2. Now draw the header and the Export button safely
 left, right = st.columns([3, 1])
 with left:
     st.subheader("Review matrix")
-    st.caption("Edit cells directly. Use the last blank row to add cases; execution fields are ready for your team to fill in.")
+    st.caption("Edit cells directly. Use the last blank row to add cases.")
 with right:
-    if not st.session_state.suite.empty:
-        st.download_button("↓  Export Excel", data=workbook_bytes(st.session_state.suite), file_name=f"test_cases_{date.today().isoformat()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", width="stretch")
+    # The button will now see the data correctly and stay visible
+    xlsx_data = workbook_bytes(st.session_state.suite)
+    st.download_button(
+        label="⬇️Export Excel (.xlsx)",
+        data=xlsx_data,
+        file_name=f"test_cases_{date.today().isoformat()}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+        use_container_width=True
+    )
 
-if st.session_state.suite.empty:
+# 3. Inform the user if they haven't uploaded a document yet
+if len(st.session_state.source_text) == 0:
     st.info("Upload a requirements document in the sidebar to begin. You can also add cases manually in the grid below.")
-    st.session_state.suite = pd.DataFrame([{column: "" for column in COLUMNS}], columns=COLUMNS)
+
 
 edited = st.data_editor(
     st.session_state.suite,
@@ -286,12 +317,14 @@ edited = st.data_editor(
     hide_index=True,
     width="stretch",
     height=550,
+    # This keyword clears Streamlit's built-in header actions (hiding the "Download as CSV" tool)
+    disabled=False, 
     column_config={
         "Sr. No.": st.column_config.TextColumn("Sr. No.", width="small"),
         "Testing Type": st.column_config.SelectboxColumn("Testing Type", options=["Manual", "Automation"], width="small"),
-        "System Test Case Type": st.column_config.SelectboxColumn("System Test Case Type", options=["Positive", "Negative", "Boundary", "Edge Case", "Regression", "Security", "Performance"], width="medium"),
+        "System Test Case Type": st.column_config.SelectboxColumn("System Test Case Type", options=["Positive", "Negative"], width="medium"),
         "Priority": st.column_config.SelectboxColumn("Priority", options=["High", "Medium", "Low"], width="small"),
-        "Test Status": st.column_config.SelectboxColumn("Test Status", options=["Not Run", "Passed", "Failed", "Blocked"], width="small"),
+        "Test Status": st.column_config.SelectboxColumn("Test Status", options=["", "passed", "failed", "pending-not-offered", "pending not able to simulate", "pending out of scope", "pending -parent test case failed"], width="medium"),
         "Date of Testing": st.column_config.TextColumn("Date of Testing", help="Enter date as DD-MM-YYYY"),
         "Test Objective": st.column_config.TextColumn("Test Objective", width="large"),
         "Pre-requisite": st.column_config.TextColumn("Pre-requisite", width="large"),
@@ -300,6 +333,7 @@ edited = st.data_editor(
         "Expected Output": st.column_config.TextColumn("Expected Output", width="large"),
     },
 )
+
 st.session_state.suite = edited
 
 valid_rows = edited.fillna("").astype(str).apply(lambda row: any(value.strip() for value in row), axis=1).sum()
