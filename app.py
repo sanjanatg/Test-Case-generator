@@ -422,7 +422,7 @@ else:
                 st.rerun()
 
         # 2. LLM Configuration Engine (Relocated from Sidebar)
-        with st.expander("⚙️ LLM Provider & API Configurations", expanded=False):
+        with st.expander(" LLM Provider & API Configurations", expanded=False):
             p_col1, p_col2 = st.columns(2)
             with p_col1:
                 provider = st.selectbox("LLM Provider Preset", list(PROVIDER_PRESETS.keys()))
@@ -439,8 +439,8 @@ else:
                 api_key = st.text_input("API Access Key", value=env_key, type="password")
 
         # 3. Import Requirements Document Control Center
-        st.markdown("### ⬆️ Import Requirement Document")
-        import_tab1, import_tab2 = st.tabs(["📁 Upload Document File", "Paste Plain Text Here"])
+        st.markdown("### Import Requirement Document")
+        import_tab1, import_tab2 = st.tabs(["Upload Document File", "Paste Plain Text Here"])
         
         requirements_input = ""
         
